@@ -40,6 +40,7 @@ def simulate_trajectory(
 
     times: List[float] = [time]
     z_values: List[float] = [z]
+    x_values: List[float] = [x]
 
     air_density_values = [initial_air_density]
     temperature_values = [current_temp_kelvin]
@@ -79,6 +80,7 @@ def simulate_trajectory(
 
         times.append(time)
         z_values.append(z)
+        x_values.append(x)
 
     final_vx = vx
     final_vxx = vxx
@@ -98,7 +100,13 @@ def simulate_trajectory(
     else:
         angle_from_vertical_deg = math.degrees(math.atan2(abs(horizontal_total), abs(final_vz)))
 
-    trajectory_df = pd.DataFrame({"Time (s)": times, "Altitude (m)": z_values})
+    trajectory_df = pd.DataFrame(
+        {
+            "Time (s)": times,
+            "Altitude (m)": z_values,
+            "Horizontal Distance (m)": x_values,
+        }
+    )
 
     return {
         "initial_temperature": temperature_values[0],
@@ -155,43 +163,95 @@ def main():
             CdA=CdA,
         )
 
-        st.subheader("Results")
-        st.write(f"Initial Temperature at {initial_height:.2f} meters: {results['initial_temperature']:.2f} K")
-        st.write(f"Initial Air Density at {initial_height:.2f} meters: {results['initial_air_density']:.4f} kg/m³")
-        st.write(f"Final x-position: {results['final_x']:.2f} meters")
-        st.write(f"X-position due to initial velocity only: {results['xvx']:.2f} m")
-        st.write(f"Final x-position due to wind force alone: {results['final_x_wind']:.2f} meters")
-        st.write(f"Final velocity (x): {results['final_vx']:.2f} m/s")
-        st.write(f"Final velocity (z): {results['final_vz']:.2f} m/s")
-        st.write(f"Final velocity (x,z): {results['final_vxvz']:.2f} m/s")
-        st.write(f"Total time until z=0: {results['total_time']:.2f} seconds")
-        st.write(f"GRZ Origin Position = {results['grz_origin']:.2f} metres")
-        st.write(f"GRZ Area around the origin position = {results['grz_area']:.2f} metres squared")
-        st.write(f"GRZ radius around the origin point = {results['grz_radius']:.2f} metres")
-        st.write(f"GRZ maximum distance = {results['grz_max']:.2f} metres")
-        st.write(f"GRZ minimum distance = {results['grz_min']:.2f} metres")
-        if math.isinf(results['p_coll']):
-            st.write("Probability of collision with 1 person = Undefined (GRZ area is zero)")
-        else:
-            st.write(f"Probability of collision with 1 person = {results['p_coll']:.5f}")
-        st.write(
-            f"Angle of arrival relative to vertical at collision: {results['angle_from_vertical_deg']:.2f}°"
+        st.subheader("Results Overview")
+        overview_cols = st.columns(3)
+        overview_cols[0].metric(
+            "Total Flight Time (s)", f"{results['total_time']:.2f}", help="Time until the UA reaches ground level"
+        )
+        overview_cols[1].metric(
+            "Horizontal Distance (m)", f"{results['final_x']:.2f}", help="Total horizontal distance travelled"
+        )
+        overview_cols[2].metric(
+            "Impact Angle (°)",
+            f"{results['angle_from_vertical_deg']:.2f}",
+            help="Angle between the UA velocity vector and vertical at impact",
         )
 
-        st.subheader("Vertical Trajectory")
+        dynamics_cols = st.columns(3)
+        dynamics_cols[0].metric(
+            "Final Vx (m/s)", f"{results['final_vx']:.2f}", help="Horizontal velocity due to wind"
+        )
+        dynamics_cols[1].metric(
+            "Final Vz (m/s)", f"{results['final_vz']:.2f}", help="Vertical velocity at impact"
+        )
+        dynamics_cols[2].metric(
+            "Resultant Speed (m/s)",
+            f"{results['final_vxvz']:.2f}",
+            help="Magnitude of the combined velocity components",
+        )
+
+        st.markdown("### Atmospheric Conditions")
+        st.write(
+            f"Temperature at {initial_height:.2f} m: **{results['initial_temperature']:.2f} K**"
+        )
+        st.write(
+            f"Air density at {initial_height:.2f} m: **{results['initial_air_density']:.4f} kg/m³**"
+        )
+
+        st.markdown("### Ground Risk Zone Metrics")
+        grz_data = pd.DataFrame(
+            {
+                "Metric": [
+                    "GRZ Origin Position (m)",
+                    "GRZ Radius (m)",
+                    "GRZ Area (m²)",
+                    "GRZ Minimum Distance (m)",
+                    "GRZ Maximum Distance (m)",
+                    "Probability of Collision (1 person)",
+                ],
+                "Value": [
+                    f"{results['grz_origin']:.2f}",
+                    f"{results['grz_radius']:.2f}",
+                    f"{results['grz_area']:.2f}",
+                    f"{results['grz_min']:.2f}",
+                    f"{results['grz_max']:.2f}",
+                    "Undefined" if math.isinf(results["p_coll"]) else f"{results['p_coll']:.5f}",
+                ],
+            }
+        )
+        st.dataframe(grz_data, use_container_width=True, hide_index=True)
+
+        displacement_cols = st.columns(2)
+        displacement_cols[0].metric(
+            "Displacement from Initial Velocity (m)", f"{results['xvx']:.2f}"
+        )
+        displacement_cols[1].metric(
+            "Displacement from Wind (m)", f"{results['final_x_wind']:.2f}"
+        )
+
+        st.subheader("Trajectory Visualisations")
         trajectory_chart = (
             alt.Chart(results["trajectory"])
-            .mark_line()
-            .encode(x="Time (s)", y="Altitude (m)")
-            .properties(height=400)
+            .mark_line(color="#4E79A7")
+            .encode(
+                x=alt.X("Time (s)", title="Time (s)"),
+                y=alt.Y("Altitude (m)", title="Altitude (m)"),
+            )
+            .properties(height=320)
         )
 
-        failure_point = pd.DataFrame({"Time (s)": [0.0], "Altitude (m)": [initial_height]})
-        failure_marker = alt.Chart(failure_point).mark_point(color="red", size=100)
+        distance_chart = (
+            alt.Chart(results["trajectory"])
+            .mark_line(color="#F28E2B")
+            .encode(
+                x=alt.X("Horizontal Distance (m)", title="Horizontal Distance (m)"),
+                y=alt.Y("Altitude (m)", title="Altitude (m)"),
+            )
+            .properties(height=320)
+        )
 
-        st.altair_chart(trajectory_chart + failure_marker, use_container_width=True)
-
-        st.caption("The red marker denotes the point of failure (time = 0).")
+        st.altair_chart(trajectory_chart, use_container_width=True)
+        st.altair_chart(distance_chart, use_container_width=True)
 
 
 if __name__ == "__main__":
